@@ -18,33 +18,40 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxtst-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install all Python libraries
+# Install all Python libraries with pinned versions for reproducibility
 RUN pip install --no-cache-dir \
     # Core AI/ML
-    TTS \
-    transformers \
-    torch \
-    accelerate \
+    TTS==0.22.0 \
+    transformers==4.38.0 \
+    torch==1.7.1 \
+    torchaudio==0.7.2 \
+    accelerate==0.27.0 \
     # Vakyansh
-    grpcio \
-    grpcio-tools \
-    # New additions from user
-    pyautogui \
-    SpeechRecognition \
-    vosk \
-    openai-whisper \
-    keyboard \
-    pynput \
-    pyaudio \
-    sounddevice \
-    pyttsx3 \
-    edge-tts \
-    gTTS \
-    playsound \
-    simpleaudio \
-    langchain \
-    chromadb \
-    faiss-cpu
+    grpcio==1.37.0 \
+    grpcio-tools==1.37.0 \
+    # Other assistant tools
+    pyautogui==0.9.54 \
+    SpeechRecognition==3.10.0 \
+    vosk==0.3.45 \
+    openai-whisper==20231117 \
+    keyboard==0.13.5 \
+    pynput==1.7.6 \
+    pyaudio==0.2.14 \
+    sounddevice==0.4.6 \
+    pyttsx3==2.90 \
+    edge-tts==6.1.8 \
+    gTTS==2.5.1 \
+    playsound==1.3.0 \
+    simpleaudio==1.0.4 \
+    # LangChain
+    langchain==0.1.10 \
+    chromadb==0.4.22 \
+    faiss-cpu==1.7.4 \
+    # Vakyansh dependencies not in the main list
+    numpy==1.20.0 \
+    GPUtil==1.4.0 \
+    pydub==0.25.1 \
+    webrtcvad==2.0.11
 
 # Clone the Vakyansh repository
 RUN git clone https://github.com/Open-Speech-EkStep/speech-recognition-open-api.git

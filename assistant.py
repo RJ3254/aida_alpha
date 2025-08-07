@@ -23,6 +23,20 @@ from speech_recognition_open_api_pb2 import Language, RecognitionConfig, Recogni
 
 # --- Vakyansh ASR Setup ---
 
+def _download_file(url, path):
+    """Downloads a file with error handling."""
+    try:
+        response = requests.get(url, timeout=30, allow_redirects=True, stream=True)
+        response.raise_for_status()  # Raise an exception for bad status codes
+        with open(path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+        print(f"Successfully downloaded {os.path.basename(path)}.")
+        return True
+    except requests.exceptions.RequestException as e:
+        print(f"Error downloading {url}: {e}")
+        return False
+
 def setup_vakyansh():
     """
     Downloads Vakyansh models and creates the necessary configuration files
@@ -46,18 +60,16 @@ def setup_vakyansh():
     # Download model if it doesn't exist
     if not os.path.exists(model_path):
         print("Downloading Vakyansh English model...")
-        r = requests.get(model_url, allow_redirects=True)
-        with open(model_path, 'wb') as f:
-            f.write(r.content)
-        print("Model downloaded.")
+        if not _download_file(model_url, model_path):
+            # Exit or handle failure appropriately
+            raise RuntimeError("Failed to download Vakyansh model. Cannot continue.")
 
     # Download dict if it doesn't exist
     if not os.path.exists(dict_path):
         print("Downloading Vakyansh dictionary...")
-        r = requests.get(dict_url, allow_redirects=True)
-        with open(dict_path, 'wb') as f:
-            f.write(r.content)
-        print("Dictionary downloaded.")
+        if not _download_file(dict_url, dict_path):
+            # Exit or handle failure appropriately
+            raise RuntimeError("Failed to download Vakyansh dictionary. Cannot continue.")
 
     # Create model_dict.json if it doesn't exist
     if not os.path.exists(model_dict_path):
@@ -271,11 +283,21 @@ if __name__ == "__main__":
         print("Starting Vakyansh ASR server...")
         vakyansh_env = os.environ.copy()
         vakyansh_env["models_base_path"] = os.path.abspath(vakyansh_model_dir)
+
+        # Validate Vakyansh server paths before starting
+        stub_path = "speech-recognition-open-api/stub"
+        server_path = "speech-recognition-open-api/server.py"
+
+        if not os.path.isdir(stub_path):
+            raise FileNotFoundError(f"Vakyansh stub directory not found at: {stub_path}. Was the git clone successful?")
+        if not os.path.isfile(server_path):
+            raise FileNotFoundError(f"Vakyansh server script not found at: {server_path}. Was the git clone successful?")
+
         # Add the stub path to sys.path so grpc can find the generated files
-        sys.path.append("speech-recognition-open-api/stub")
+        sys.path.append(stub_path)
 
         vakyansh_server_process = subprocess.Popen(
-            ["python", "speech-recognition-open-api/server.py"],
+            ["python", server_path],
             env=vakyansh_env
         )
         print("Vakyansh ASR server started. Waiting for it to initialize...")
