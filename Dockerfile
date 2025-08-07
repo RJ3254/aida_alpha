@@ -18,33 +18,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxtst-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install all Python libraries
-RUN pip install --no-cache-dir \
-    # Core AI/ML
-    TTS \
-    transformers \
-    torch \
-    accelerate \
-    # Vakyansh
-    grpcio \
-    grpcio-tools \
-    # New additions from user
-    pyautogui \
-    SpeechRecognition \
-    vosk \
-    openai-whisper \
-    keyboard \
-    pynput \
-    pyaudio \
-    sounddevice \
-    pyttsx3 \
-    edge-tts \
-    gTTS \
-    playsound \
-    simpleaudio \
-    langchain \
-    chromadb \
-    faiss-cpu
+# Copy dependency specification and install Python libraries
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Clone the Vakyansh repository
 RUN git clone https://github.com/Open-Speech-EkStep/speech-recognition-open-api.git
