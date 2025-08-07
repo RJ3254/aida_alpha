@@ -23,15 +23,24 @@ from speech_recognition_open_api_pb2 import Language, RecognitionConfig, Recogni
 
 # --- Vakyansh ASR Setup ---
 
-def _download_file(url, path):
-    """Downloads a file with error handling."""
+def _download_file(url, path, expected_size):
+    """Downloads a file with error handling and size verification."""
     try:
-        response = requests.get(url, timeout=30, allow_redirects=True, stream=True)
+        print(f"Downloading {os.path.basename(path)}...")
+        response = requests.get(url, timeout=60, allow_redirects=True, stream=True)
         response.raise_for_status()  # Raise an exception for bad status codes
+
         with open(path, 'wb') as f:
             for chunk in response.iter_content(chunk_size=8192):
                 f.write(chunk)
-        print(f"Successfully downloaded {os.path.basename(path)}.")
+
+        downloaded_size = os.path.getsize(path)
+        if downloaded_size != expected_size:
+            print(f"Error: Downloaded file size ({downloaded_size}) does not match expected size ({expected_size}).")
+            os.remove(path) # Clean up corrupted file
+            return False
+
+        print(f"Successfully downloaded and verified {os.path.basename(path)}.")
         return True
     except requests.exceptions.RequestException as e:
         print(f"Error downloading {url}: {e}")
@@ -59,16 +68,12 @@ def setup_vakyansh():
 
     # Download model if it doesn't exist
     if not os.path.exists(model_path):
-        print("Downloading Vakyansh English model...")
-        if not _download_file(model_url, model_path):
-            # Exit or handle failure appropriately
+        if not _download_file(model_url, model_path, expected_size=396627253):
             raise RuntimeError("Failed to download Vakyansh model. Cannot continue.")
 
     # Download dict if it doesn't exist
     if not os.path.exists(dict_path):
-        print("Downloading Vakyansh dictionary...")
-        if not _download_file(dict_url, dict_path):
-            # Exit or handle failure appropriately
+        if not _download_file(dict_url, dict_path, expected_size=241):
             raise RuntimeError("Failed to download Vakyansh dictionary. Cannot continue.")
 
     # Create model_dict.json if it doesn't exist
@@ -300,8 +305,21 @@ if __name__ == "__main__":
             ["python", server_path],
             env=vakyansh_env
         )
-        print("Vakyansh ASR server started. Waiting for it to initialize...")
-        time.sleep(15) # Give the server time to load models
+
+        # Readiness probe for Vakyansh server
+        print("Vakyansh ASR server started. Waiting for it to become ready...")
+        max_retries = 20
+        for i in range(max_retries):
+            try:
+                with grpc.insecure_channel('localhost:50051') as channel:
+                    grpc.channel_ready_future(channel).result(timeout=1)
+                print("Vakyansh ASR server is ready.")
+                break
+            except grpc.FutureTimeoutError:
+                if i < max_retries - 1:
+                    time.sleep(1)
+                else:
+                    raise RuntimeError("Vakyansh ASR server did not become ready in time.")
 
         # --- Setup LangChain Agent ---
         print("Setting up the AI assistant...")

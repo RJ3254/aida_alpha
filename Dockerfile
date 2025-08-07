@@ -23,8 +23,8 @@ RUN pip install --no-cache-dir \
     # Core AI/ML
     TTS==0.22.0 \
     transformers==4.38.0 \
-    torch==1.7.1 \
-    torchaudio==0.7.2 \
+    torch==2.1.0 \
+    torchaudio==2.1.0 \
     accelerate==0.27.0 \
     # Vakyansh
     grpcio==1.37.0 \
@@ -53,8 +53,11 @@ RUN pip install --no-cache-dir \
     pydub==0.25.1 \
     webrtcvad==2.0.11
 
-# Clone the Vakyansh repository
-RUN git clone https://github.com/Open-Speech-EkStep/speech-recognition-open-api.git
+# Clone the Vakyansh repository and checkout a specific commit for reproducibility
+RUN git clone https://github.com/Open-Speech-EkStep/speech-recognition-open-api.git \
+    && cd speech-recognition-open-api \
+    && git checkout 877100345ddf7570ab1c0c49a0653c9686dadbd1 \
+    && cd ..
 
 # Install Vakyansh dependencies
 RUN pip install --no-cache-dir -r speech-recognition-open-api/requirements.txt
