@@ -1,6 +1,9 @@
 import os
 import subprocess
 import platform
+import torch
+import time
+import sys
 from langchain.agents import AgentExecutor, create_react_agent
 from langchain_community.llms import HuggingFacePipeline
 from langchain.memory import ConversationBufferWindowMemory
@@ -9,44 +12,151 @@ from langchain.tools import Tool
 from transformers import pipeline
 import pyautogui
 import speech_recognition as sr
-from gtts import gTTS
+import json
+import requests
+from TTS.api import TTS
 from playsound import playsound
+import grpc
+from speech_recognition_open_api_pb2_grpc import SpeechRecognizerStub
+from speech_recognition_open_api_pb2 import Language, RecognitionConfig, RecognitionAudio, SpeechRecognitionRequest
+
+
+# --- Vakyansh ASR Setup ---
+
+def setup_vakyansh():
+    """
+    Downloads Vakyansh models and creates the necessary configuration files
+    if they don't already exist.
+    """
+    print("Setting up Vakyansh ASR...")
+    model_dir = "vakyansh_models"
+    english_model_dir = os.path.join(model_dir, "english")
+    model_dict_path = os.path.join(model_dir, "model_dict.json")
+
+    # URLs for the English model files
+    model_url = "https://storage.googleapis.com/vakyansh-open-models/models/english/en-IN/english_infer.pt"
+    dict_url = "https://storage.googleapis.com/vakyansh-open-models/models/english/en-IN/dict.ltr.txt"
+
+    model_path = os.path.join(english_model_dir, "english_infer.pt")
+    dict_path = os.path.join(english_model_dir, "dict.ltr.txt")
+
+    # Create directories if they don't exist
+    os.makedirs(english_model_dir, exist_ok=True)
+
+    # Download model if it doesn't exist
+    if not os.path.exists(model_path):
+        print("Downloading Vakyansh English model...")
+        r = requests.get(model_url, allow_redirects=True)
+        with open(model_path, 'wb') as f:
+            f.write(r.content)
+        print("Model downloaded.")
+
+    # Download dict if it doesn't exist
+    if not os.path.exists(dict_path):
+        print("Downloading Vakyansh dictionary...")
+        r = requests.get(dict_url, allow_redirects=True)
+        with open(dict_path, 'wb') as f:
+            f.write(r.content)
+        print("Dictionary downloaded.")
+
+    # Create model_dict.json if it doesn't exist
+    if not os.path.exists(model_dict_path):
+        print("Creating model_dict.json...")
+        # Note: The path inside the JSON must be the absolute path within the container
+        model_config = {
+            "en": {
+                "path": os.path.abspath(model_path),
+                "enablePunctuation": True,
+                "enableITN": True
+            }
+        }
+        with open(model_dict_path, 'w') as f:
+            json.dump(model_config, f, indent=4)
+        print("model_dict.json created.")
+
+    print("Vakyansh ASR setup complete.")
+    return model_dir
+
+
+# --- Initialize TTS ---
+# This will download the model on the first run
+print("Initializing Coqui TTS...")
+tts = TTS("tts_models/en/ljspeech/vits")
+print("Coqui TTS initialized.")
 
 # --- Tool Functions ---
 
 def speak_text(text: str) -> str:
     """
-    Converts text to speech and plays it.
+    Converts text to speech using Coqui TTS and plays it.
     :param text: The text to be spoken.
     """
     try:
         print(f"Speaking: {text}")
-        tts = gTTS(text=text, lang='en')
-        tts_file = "response.mp3"
-        tts.save(tts_file)
-        playsound(tts_file)
-        os.remove(tts_file)
+        output_file = "response.wav"
+        # Generate speech and save to a file
+        tts.tts_to_file(text=text, file_path=output_file)
+        # Play the generated audio file
+        playsound(output_file)
+        # Clean up the audio file
+        os.remove(output_file)
         return "Text spoken successfully."
     except Exception as e:
         return f"Error in speak_text: {e}"
 
 def listen_to_mic() -> str:
     """
-    Listens for audio from the microphone and transcribes it to text.
+    Listens for audio from the microphone and transcribes it to text using Vakyansh.
     NOTE: This requires microphone access from the host machine.
     """
     r = sr.Recognizer()
     with sr.Microphone() as source:
         print("Listening...")
-        audio = r.listen(source)
+        r.adjust_for_ambient_noise(source)
+        audio_data = r.listen(source)
+        print("Processing...")
+
     try:
-        text = r.recognize_google(audio)
-        print(f"Heard: {text}")
-        return text
+        # Get audio bytes
+        audio_bytes = audio_data.get_wav_data()
+
+        # Connect to Vakyansh gRPC server
+        host = "localhost"
+        port = 50051
+        with grpc.insecure_channel(f'{host}:{port}') as channel:
+            stub = SpeechRecognizerStub(channel)
+
+            # Prepare the request
+            lang = Language(sourceLanguage='en')
+            config = RecognitionConfig(
+                language=lang,
+                audioFormat='wav',
+                transcriptionFormat=RecognitionConfig.TranscriptionFormat(value='transcript'),
+                punctuation=True,
+                enableInverseTextNormalization=True
+            )
+            audio = RecognitionAudio(audioContent=audio_bytes)
+            request = SpeechRecognitionRequest(audio=[audio], config=config)
+
+            # Make the gRPC call
+            response = stub.recognize(request)
+
+            if response.status == 'SUCCESS' and response.output:
+                transcript = response.output[0].source
+                print(f"Heard: {transcript}")
+                return transcript
+            else:
+                error_message = response.status_text or "Unknown error from Vakyansh"
+                return f"Vakyansh ASR Error: {error_message}"
+
     except sr.UnknownValueError:
         return "Could not understand audio."
     except sr.RequestError as e:
-        return f"Could not request results; {e}"
+        return f"Could not request results from SpeechRecognition service; {e}"
+    except grpc.RpcError as e:
+        return f"Could not connect to Vakyansh ASR server: {e.details()}"
+    except Exception as e:
+        return f"An error occurred during speech recognition: {e}"
 
 def take_screenshot(filename: str = "screenshot.png") -> str:
     """
@@ -77,13 +187,14 @@ def run_os_command(command: str) -> str:
 def setup_agent():
     """Sets up the LangChain agent with tools, memory, and an LLM."""
     # 1. Initialize the LLM
-    # Using a smaller, local model for demonstration purposes.
-    # In a real-world scenario, you might use a more powerful model like Gemma.
+    # Using the specified Gemma 3n model.
     llm = HuggingFacePipeline.from_model_id(
-        model_id="gpt2",
+        model_id="google/gemma-3n-E4B-it",
         task="text-generation",
         device_map="auto",
-        pipeline_kwargs={"max_new_tokens": 200},
+        pipeline_kwargs={"max_new_tokens": 512},
+        # Add torch_dtype to load in a more memory-efficient way
+        model_kwargs={"torch_dtype": torch.bfloat16},
     )
 
     # 2. Define the tools
@@ -152,25 +263,49 @@ def setup_agent():
 # --- Main Interactive Loop ---
 
 if __name__ == "__main__":
-    print("Setting up the AI assistant...")
-    ai_assistant = setup_agent()
-    print("\nAI Assistant is ready. Type 'exit' to quit.")
-    print("-" * 50)
+    vakyansh_server_process = None
+    try:
+        # --- Setup and Start Vakyansh Server ---
+        vakyansh_model_dir = setup_vakyansh()
 
-    while True:
-        try:
-            user_input = input("You: ")
-            if user_input.lower() == 'exit':
+        print("Starting Vakyansh ASR server...")
+        vakyansh_env = os.environ.copy()
+        vakyansh_env["models_base_path"] = os.path.abspath(vakyansh_model_dir)
+        # Add the stub path to sys.path so grpc can find the generated files
+        sys.path.append("speech-recognition-open-api/stub")
+
+        vakyansh_server_process = subprocess.Popen(
+            ["python", "speech-recognition-open-api/server.py"],
+            env=vakyansh_env
+        )
+        print("Vakyansh ASR server started. Waiting for it to initialize...")
+        time.sleep(15) # Give the server time to load models
+
+        # --- Setup LangChain Agent ---
+        print("Setting up the AI assistant...")
+        ai_assistant = setup_agent()
+        print("\nAI Assistant is ready. Type 'exit' to quit.")
+        print("-" * 50)
+
+        while True:
+            try:
+                user_input = input("You: ")
+                if user_input.lower() == 'exit':
+                    break
+
+                response = ai_assistant.invoke({"input": user_input})
+                # The actual response is in the 'output' key.
+                # We will just print the whole dict for this example.
+                print("AI:", response)
+
+            except KeyboardInterrupt:
                 break
+            except Exception as e:
+                print(f"An error occurred: {e}")
 
-            response = ai_assistant.invoke({"input": user_input})
-            # The actual response is in the 'output' key.
-            # We will just print the whole dict for this example.
-            print("AI:", response)
-
-        except KeyboardInterrupt:
-            break
-        except Exception as e:
-            print(f"An error occurred: {e}")
-
-    print("\nAssistant shutting down.")
+    finally:
+        if vakyansh_server_process:
+            print("Terminating Vakyansh ASR server...")
+            vakyansh_server_process.terminate()
+            vakyansh_server_process.wait()
+        print("\nAssistant shutting down.")

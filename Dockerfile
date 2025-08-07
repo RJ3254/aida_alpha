@@ -55,6 +55,9 @@ RUN pip install --no-cache-dir -r speech-recognition-open-api/requirements.txt
 # Vakyansh models will be downloaded by the application code
 # to avoid bloating the image with models for all languages.
 
+# Expose the gRPC port for the Vakyansh ASR server
+EXPOSE 50051
+
 # Copy the application code into the container
 COPY assistant.py .
 
