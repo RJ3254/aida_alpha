@@ -6,9 +6,17 @@ import time
 import sys
 from langchain.agents import AgentExecutor, create_react_agent
 from langchain_community.llms import HuggingFacePipeline
-from langchain.memory import ConversationBufferWindowMemory
+from langchain.memory import (
+    CombinedMemory,
+    ConversationBufferMemory,
+    ConversationBufferWindowMemory,
+    ConversationSummaryBufferMemory,
+    VectorStoreRetrieverMemory,
+)
 from langchain.prompts import PromptTemplate
 from langchain.tools import Tool
+from langchain.embeddings import HuggingFaceEmbeddings
+from langchain.vectorstores import FAISS
 from transformers import pipeline
 import pyautogui
 import speech_recognition as sr
@@ -18,7 +26,12 @@ from TTS.api import TTS
 from playsound import playsound
 import grpc
 from speech_recognition_open_api_pb2_grpc import SpeechRecognizerStub
-from speech_recognition_open_api_pb2 import Language, RecognitionConfig, RecognitionAudio, SpeechRecognitionRequest
+from speech_recognition_open_api_pb2 import (
+    Language,
+    RecognitionAudio,
+    RecognitionConfig,
+    SpeechRecognitionRequest,
+)
 
 
 # --- Vakyansh ASR Setup ---
@@ -239,8 +252,11 @@ def setup_agent():
     ]
 
     # 3. Create the prompt template
-    # This is a basic ReAct prompt.
+    # This is a basic ReAct prompt augmented with conversation history.
     prompt_template = """
+    The conversation so far:\n{history}\n
+    Summary of prior context:\n{summary}\n
+    Relevant facts:\n{vector_memory}\n
     Answer the following questions as best you can. You have access to the following tools:
 
     {tools}
@@ -263,17 +279,27 @@ def setup_agent():
     """
     prompt = PromptTemplate.from_template(prompt_template)
 
-
     # 4. Create the agent
     agent = create_react_agent(llm, tools, prompt)
 
-
     # 5. Set up memory
-    # We are not using memory in this simplified example, but here's how you would set it up.
-    # memory = ConversationBufferWindowMemory(k=5)
+    buffer_memory = ConversationBufferWindowMemory(k=5, memory_key="history", return_messages=True)
+    summary_memory = ConversationSummaryBufferMemory(
+        llm=llm, max_token_limit=2000, memory_key="summary"
+    )
+    full_memory = ConversationBufferMemory(memory_key="full_history", return_messages=True)
+    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    vector_store = FAISS.from_texts([], embeddings)
+    vector_memory = VectorStoreRetrieverMemory(
+        retriever=vector_store.as_retriever(), memory_key="vector_memory"
+    )
+
+    memory = CombinedMemory(
+        memories=[full_memory, buffer_memory, summary_memory, vector_memory]
+    )
 
     # 6. Create the Agent Executor
-    agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
+    agent_executor = AgentExecutor(agent=agent, tools=tools, memory=memory, verbose=True)
 
     return agent_executor
 

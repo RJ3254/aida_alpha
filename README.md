@@ -48,3 +48,4 @@ The `assistant.py` script is a fully-featured AI assistant that:
     *   Take screenshots.
     *   Run shell commands.
     *   Answer questions using the Gemma 3n language model.
+    *   Maintain context using LangChain's combined memory stack—full conversation buffer, windowed buffer, summary, and vector memories.
